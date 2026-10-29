@@ -36,7 +36,6 @@ CREATE TABLE users (
     occupation TEXT
 );
 
-
 INSERT INTO movies (id, title, year, genres) VALUES (1, 'Toy Story', 1995, 'Adventure|Animation|Children|Comedy|Fantasy');
 INSERT INTO movies (id, title, year, genres) VALUES (2, 'Jumanji', 1995, 'Adventure|Children|Fantasy');
 INSERT INTO movies (id, title, year, genres) VALUES (3, 'Grumpier Old Men', 1995, 'Comedy|Romance');

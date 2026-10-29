@@ -11,6 +11,7 @@ CREATE TABLE movies (
     genres TEXT
 );
 
+
 CREATE TABLE ratings (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,

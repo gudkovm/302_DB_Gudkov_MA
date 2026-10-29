@@ -1,100 +1,44 @@
--- 1. Пары пользователей, оценивших один и тот же фильм (первые 100)
-SELECT DISTINCT
-    u1.name AS user1,
-    u2.name AS user2,
-    m.title AS movie_title
-FROM ratings r1
-JOIN ratings r2 ON r1.movie_id = r2.movie_id AND r1.user_id < r2.user_id
-JOIN users u1 ON u1.id = r1.user_id
-JOIN users u2 ON u2.id = r2.user_id
-JOIN movies m ON m.id = r1.movie_id
-LIMIT 100;
+#!/bin/bash
+chcp 65001
 
--- 2. 10 самых свежих оценок от разных пользователей
-SELECT m.title,
-       u.name,
-       r.rating,
-       date(r.timestamp, 'unixepoch') AS review_date
-FROM ratings r
-JOIN users u ON u.id = r.user_id
-JOIN movies m ON m.id = r.movie_id
-GROUP BY r.user_id
-HAVING r.timestamp = MAX(r.timestamp)
-ORDER BY r.timestamp DESC
-LIMIT 10;
+sqlite3 movies_rating.db < db_init.sql
 
--- 3. Фильмы с максимальным и минимальным средним рейтингом + «Рекомендуем»
-WITH avg_ratings AS (
-    SELECT m.id,
-           m.title,
-           m.year,
-           AVG(r.rating) AS avg_rating
-    FROM movies m
-    JOIN ratings r ON r.movie_id = m.id
-    GROUP BY m.id
-),
-extremes AS (
-    SELECT * FROM avg_ratings WHERE avg_rating = (SELECT MAX(avg_rating) FROM avg_ratings)
-    UNION ALL
-    SELECT * FROM avg_ratings WHERE avg_rating = (SELECT MIN(avg_rating) FROM avg_ratings)
-)
-SELECT title,
-       year,
-       avg_rating,
-       CASE WHEN avg_rating = (SELECT MAX(avg_rating) FROM avg_ratings) THEN 'Да' ELSE 'Нет' END AS "Рекомендуем"
-FROM extremes
-ORDER BY year, title;
+echo "1. Все пары пользователей, поставивших оценку одному и тому же фильму. Дубликаты устранены, пар с самим собой нет. Выводятся имена обоих пользователей и название фильма, ограничение — 100 строк."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "SELECT ua.name AS first_user, ub.name AS second_user, mv.title AS movie FROM (SELECT x.movie_id, x.user_id AS a_id, y.user_id AS b_id FROM ratings x JOIN ratings y ON y.movie_id = x.movie_id AND x.user_id < y.user_id GROUP BY x.movie_id, x.user_id, y.user_id) pairs JOIN users ua ON ua.id = pairs.a_id JOIN users ub ON ub.id = pairs.b_id JOIN movies mv ON mv.id = pairs.movie_id ORDER BY mv.title, ua.name, ub.name LIMIT 100;"
+echo " "
 
--- 4. Количество и средняя оценка от женщин за 2010–2012 гг.
-SELECT COUNT(*) AS rating_count,
-       AVG(r.rating) AS avg_rating
-FROM ratings r
-JOIN users u ON u.id = r.user_id
-WHERE u.gender = 'F'
-  AND date(r.timestamp, 'unixepoch') BETWEEN '2010-01-01' AND '2012-12-31';
+echo "2. Десять самых свежих оценок (по одной от каждого пользователя): название фильма, имя пользователя, оценка и дата в формате ГГГГ-ММ-ДД."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH numbered AS (SELECT user_id, movie_id, rating, timestamp, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp DESC, id DESC) AS pos FROM ratings) SELECT mv.title AS movie, us.name AS user_name, numbered.rating, strftime('%Y-%m-%d', numbered.timestamp, 'unixepoch') AS review_date FROM numbered JOIN users us ON us.id = numbered.user_id JOIN movies mv ON mv.id = numbered.movie_id WHERE numbered.pos = 1 ORDER BY numbered.timestamp DESC, numbered.user_id ASC LIMIT 10;"
+echo " "
 
--- 5. Список фильмов со средней оценкой и местом в рейтинге (первые 20)
-SELECT m.title,
-       m.year,
-       AVG(r.rating) AS avg_rating,
-       RANK() OVER (ORDER BY AVG(r.rating) DESC) AS rating_rank
-FROM movies m
-JOIN ratings r ON r.movie_id = m.id
-GROUP BY m.id
-ORDER BY m.year, m.title
-LIMIT 20;
+echo "3. В одном списке фильмы с наибольшей и наименьшей средней оценкой, отсортированные по году выпуска и названию. В колонке \"Рекомендуем\" стоит \"Да\" или \"Нет\" в зависимости от средней оценки."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH stats AS (SELECT movie_id, AVG(rating) AS avg_r FROM ratings GROUP BY movie_id), edges AS (SELECT MAX(avg_r) AS top_r, MIN(avg_r) AS low_r FROM stats) SELECT mv.title AS movie, mv.year, stats.avg_r AS average_rating, CASE WHEN stats.avg_r = edges.top_r THEN 'Да' ELSE 'Нет' END AS 'Рекомендуем' FROM stats JOIN movies mv ON mv.id = stats.movie_id, edges WHERE stats.avg_r IN (edges.top_r, edges.low_r) ORDER BY mv.year ASC, mv.title ASC;"
+echo " "
 
--- 6. 10 последних зарегистрированных пользователей в формате "Фамилия Имя|Дата"
-SELECT
-    SUBSTR(u.name, INSTR(u.name, ' ') + 1) || ' ' || SUBSTR(u.name, 1, INSTR(u.name, ' ') - 1) AS "Фамилия Имя",
-    '|' || u.register_date AS "|Дата регистрации"
-FROM users u
-ORDER BY u.register_date DESC
-LIMIT 10;
+echo "4. Количество оценок и средняя оценка, выставленная фильмам пользователями-женщинами с 2010 по 2012 год включительно."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "SELECT COUNT(r.rating) AS total_ratings, AVG(r.rating) AS mean_rating FROM ratings AS r INNER JOIN users AS u ON u.id = r.user_id WHERE u.gender IN ('female', 'F', 'f') AND strftime('%Y', r.timestamp, 'unixepoch') BETWEEN '2010' AND '2012';"
+echo " "
 
--- 7. Таблица умножения через рекурсивный CTE
-WITH RECURSIVE multiplication(i, j) AS (
-    SELECT 1, 1
-    UNION ALL
-    SELECT i, j + 1 FROM multiplication WHERE j < 10
-    UNION ALL
-    SELECT i + 1, 1 FROM multiplication WHERE j = 10 AND i < 10
-)
-SELECT i || 'x' || j || '=' || (i * j) AS result
-FROM multiplication
-ORDER BY i, j;
+echo "5. Список фильмов со средней оценкой и позицией в рейтинге по этой средней оценке. Сортировка по году и названию, первые 20 строк."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH computed AS (SELECT movie_id AS mid, AVG(rating) AS mean_r FROM ratings GROUP BY movie_id), ordered AS (SELECT mid, mean_r, RANK() OVER (ORDER BY mean_r DESC) AS position FROM computed) SELECT mv.title AS movie, mv.year, ordered.mean_r AS average_rating, ordered.position AS rating_position FROM ordered JOIN movies mv ON mv.id = ordered.mid ORDER BY mv.year ASC, mv.title ASC LIMIT 20;"
+echo " "
 
--- 8. Все жанры фильмов через рекурсивный CTE
-WITH RECURSIVE split_genres(id, genre, rest) AS (
-    SELECT id,
-           SUBSTR(genres, 1, INSTR(genres || '|', '|') - 1) AS genre,
-           SUBSTR(genres, INSTR(genres || '|', '|') + 1) AS rest
-    FROM movies
-    UNION ALL
-    SELECT id,
-           SUBSTR(rest, 1, INSTR(rest || '|', '|') - 1),
-           SUBSTR(rest, INSTR(rest || '|', '|') + 1)
-    FROM split_genres
-    WHERE rest != ''
-)
-SELECT DISTINCT genre FROM split_genres ORDER BY genre;
+echo "6. Десять последних зарегистрированных пользователей в формате \"Фамилия Имя|Дата регистрации\"."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH last_users AS (SELECT name AS full_name, register_date AS reg_date FROM users ORDER BY register_date DESC LIMIT 10) SELECT (CASE WHEN instr(full_name, ' ') > 0 THEN substr(full_name, instr(full_name, ' ') + 1) || ' ' || substr(full_name, 1, instr(full_name, ' ') - 1) ELSE full_name END) || '|' || reg_date AS 'Фамилия Имя|Дата регистрации' FROM last_users ORDER BY reg_date DESC;"
+echo " "
+
+echo "7. Таблица умножения для чисел от 1 до 10, собранная через рекурсивный CTE в виде одного столбца \"AxB=C\"."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH RECURSIVE counter(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM counter WHERE n < 100) SELECT CAST((n - 1) / 10 + 1 AS TEXT) || 'x' || CAST((n - 1) % 10 + 1 AS TEXT) || '=' || CAST((((n - 1) / 10 + 1) * ((n - 1) % 10 + 1)) AS TEXT) AS multiplication_line FROM counter ORDER BY n;"
+echo " "
+
+echo "8. Все жанры из таблицы movies, по одному на строку, с помощью рекурсивного CTE."
+echo --------------------------------------------------
+sqlite3 movies_rating.db -box -echo "WITH RECURSIVE exploded(movie_id, remainder, current_genre) AS (SELECT id, genres || '|', NULL FROM movies UNION ALL SELECT movie_id, substr(remainder, instr(remainder, '|') + 1), substr(remainder, 1, instr(remainder, '|') - 1) FROM exploded WHERE remainder <> '') SELECT DISTINCT current_genre AS genre FROM exploded WHERE current_genre IS NOT NULL AND current_genre <> '' ORDER BY current_genre ASC;"
+echo " "
